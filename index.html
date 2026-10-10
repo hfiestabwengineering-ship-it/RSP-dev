@@ -4026,6 +4026,18 @@ return Plotly;
     .legend-dots { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin-top: 9px; flex-wrap: wrap; }
     .legend-dots span { display: inline-flex; align-items: center; gap: 5px; }
     .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+    .cov-list { margin-top: 8px; font-size: 12px; }
+    .cov-list:empty { display: none; }
+    .cov-title { font-weight: 700; margin-bottom: 3px; color: var(--text); }
+    .cov-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; border-top: 1px dashed rgba(128,128,128,.25); }
+    .cov-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+    .cov-dot.ok { background: var(--ok); }
+    .cov-dot.bad { background: var(--bad); }
+    .cov-name { flex: 1 1 auto; }
+    .cov-status { font-weight: 700; }
+    .cov-status.ok, .cov-margin.ok { color: var(--ok); }
+    .cov-status.bad, .cov-margin.bad { color: var(--bad); }
+    .cov-margin { font-variant-numeric: tabular-nums; }
 
     /* ---------- plots ---------- */
     .plots { display: grid; grid-template-columns: 1fr; gap: 14px; padding: 12px 14px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
@@ -4282,6 +4294,7 @@ box(12,4,
             <span><span class="dot" style="background:#dc2626"></span> structure NOT protected</span>
             <span><span class="dot" style="background:#0f172a"></span> lowest point</span>
           </div>
+          <div class="cov-list" id="coverage-list"></div>
         </div>
       </div>
 
@@ -6157,18 +6170,24 @@ function createColumnPanel(index, vals){
       if(['on','only','selected','only-selected'].includes(model.showArcSpheres)){
         addTwoPoleSphereTraces3D(data, model);
       }
+      const cov3D = rspCheckStructures();
+      const covItem = (kind, idx) => (cov3D.items || []).find(it => it.kind === kind && it.idx === idx);
+      const covText = ci => !ci || !Number.isFinite(ci.margin) ? 'no verdict' : (ci.ok ? 'PROTECTED \u00b7 clearance +' + ci.margin.toFixed(2) + ' m' : 'NOT PROTECTED \u00b7 deficit ' + (-ci.margin).toFixed(2) + ' m');
+      const covColor = ok => ok === null ? null : (ok ? '#16a34a' : '#dc2626');
       (boxModels || []).forEach((boxModel, boxIdx) => {
         const boxGeom = getBoxGeometry(boxModel || {});
         if(boxGeom){
           const v = boxGeom.verts;
+          const ci = covItem('Box', boxIdx + 1);
+          const boxOk = ci ? ci.ok : null;
           data.push({
             type:'mesh3d',
             x:v.map(p=>p[0]), y:v.map(p=>p[1]), z:v.map(p=>p[2]),
             i:[0,0,4,4,0,0,1,1,2,2,3,3],
             j:[1,2,5,6,1,5,2,6,3,7,0,4],
             k:[2,3,6,7,5,4,6,5,7,6,4,7],
-            opacity:0.14, color:'gray',
-            hovertemplate:`Box ${boxIdx+1}<br>H=${(boxModel.boxHeight||0).toFixed(3)}<extra></extra>`,
+            opacity:0.22, color:covColor(boxOk) || 'gray',
+            hovertemplate:`Box ${boxIdx+1}<br>H=${(boxModel.boxHeight||0).toFixed(3)}<br>${covText(ci)}<extra></extra>`,
             name:`Box ${boxIdx+1}`, showscale:false
           });
           [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]].forEach(pair=>{
@@ -6180,15 +6199,18 @@ function createColumnPanel(index, vals){
       (columnModels || []).forEach((col, colIdx)=>{
         const cyl = buildCylinderSurface(col, 48);
         if(cyl){
+          const ci = covItem('Column', colIdx + 1);
+          const colOk = ci ? ci.ok : null;
+          const colColor = covColor(colOk) || '#666';
           data.push({
             type:'surface',
             x:cyl.X,
             y:cyl.Y,
             z:cyl.Z,
-            opacity:0.28,
-            colorscale:[[0,'#666'],[1,'#666']],
+            opacity:0.30,
+            colorscale:[[0,colColor],[1,colColor]],
             showscale:false,
-            hovertemplate:`Column ${colIdx+1}<br>x=${cyl.c.x.toFixed(3)}<br>y=${cyl.c.y.toFixed(3)}<br>H=${cyl.c.H.toFixed(3)}<br>R=${cyl.c.R.toFixed(3)}<extra></extra>`,
+            hovertemplate:`Column ${colIdx+1}<br>x=${cyl.c.x.toFixed(3)}<br>y=${cyl.c.y.toFixed(3)}<br>H=${cyl.c.H.toFixed(3)}<br>R=${cyl.c.R.toFixed(3)}<br>${covText(ci)}<extra></extra>`,
             name:`Column ${colIdx+1}`
           });
           data.push({
@@ -6345,26 +6367,38 @@ function createColumnPanel(index, vals){
 
     function buildHeatmapFigure(model, boxModels, columnModels){
       const perf = getPerformanceSettings(model.performanceMode || 'auto', model.points.length);
+      const covHm = rspCheckStructures();
+      const covTextHm = ci => !ci || !Number.isFinite(ci.margin) ? 'no verdict' : (ci.ok ? 'PROTECTED \u00b7 clearance +' + ci.margin.toFixed(2) + ' m' : 'NOT PROTECTED \u00b7 deficit ' + (-ci.margin).toFixed(2) + ' m');
       const data=[];
       (boxModels || []).forEach((boxModel, boxIdx) => {
         const boxGeom = getBoxGeometry(boxModel || {});
         if(boxGeom){
-          data.push({ type:'scatter', x:boxGeom.baseLoop.map(p=>p[0]), y:boxGeom.baseLoop.map(p=>p[1]), mode:'lines', line:{color:'black', width:3, dash:'dash'}, hovertemplate:`Box ${boxIdx+1} footprint<br>H=${(boxModel.boxHeight||0).toFixed(3)}<extra></extra>`, showlegend:false });
+          const ci = (covHm.items || []).find(it => it.kind === 'Box' && it.idx === boxIdx + 1);
+          const boxOk = ci ? ci.ok : null;
+          const boxColor = (boxOk === null || boxOk === undefined) ? 'black' : (boxOk ? '#16a34a' : '#dc2626');
+          data.push({ type:'scatter', x:boxGeom.baseLoop.map(p=>p[0]), y:boxGeom.baseLoop.map(p=>p[1]), mode:'lines', line:{color:boxColor, width:3, dash:'dash'}, hovertemplate:`Box ${boxIdx+1} footprint<br>H=${(boxModel.boxHeight||0).toFixed(3)}<br>${covTextHm(ci)}<extra></extra>`, showlegend:false });
+          const cx4 = boxGeom.baseLoop.slice(0,4).reduce((s,p)=>s+p[0],0)/4;
+          const cy4 = boxGeom.baseLoop.slice(0,4).reduce((s,p)=>s+p[1],0)/4;
+          data.push({ type:'scatter', x:[cx4], y:[cy4], mode:'text', text:['Box ' + (boxIdx+1) + (boxOk === null || boxOk === undefined ? '' : (boxOk ? ' \u2713' : ' \u2717'))], textfont:{size:12, color:boxColor, family:'Arial Black'}, hoverinfo:'skip', showlegend:false });
         }
       });
 
       (columnModels || []).forEach((col, colIdx)=>{
         const loop = circleLoop2D(col, 120);
         if(loop){
+          const ci = (covHm.items || []).find(it => it.kind === 'Column' && it.idx === colIdx + 1);
+          const colOk = ci ? ci.ok : null;
+          const colColor = (colOk === null || colOk === undefined) ? 'black' : (colOk ? '#16a34a' : '#dc2626');
           data.push({
             type:'scatter',
             x:loop.xs,
             y:loop.ys,
             mode:'lines',
-            line:{color:'black', width:3},
-            hovertemplate:`Column ${colIdx+1}<br>x=${loop.c.x.toFixed(3)}<br>y=${loop.c.y.toFixed(3)}<br>H=${loop.c.H.toFixed(3)}<br>R=${loop.c.R.toFixed(3)}<extra></extra>`,
+            line:{color:colColor, width:3},
+            hovertemplate:`Column ${colIdx+1} footprint<br>x=${loop.c.x.toFixed(3)}<br>y=${loop.c.y.toFixed(3)}<br>H=${loop.c.H.toFixed(3)}<br>R=${loop.c.R.toFixed(3)}<br>${covTextHm(ci)}<extra></extra>`,
             showlegend:false
           });
+          data.push({ type:'scatter', x:[loop.c.x], y:[loop.c.y], mode:'text', text:['Column ' + (colIdx+1) + (colOk === null || colOk === undefined ? '' : (colOk ? ' \u2713' : ' \u2717'))], textfont:{size:11, color:colColor, family:'Arial Black'}, hoverinfo:'skip', showlegend:false });
         }
       });
 
@@ -7679,6 +7713,22 @@ function createColumnPanel(index, vals){
         else { el.textContent = cov.protected + ' / ' + cov.total + ' ✗'; el.className = 'bad'; }
       }
       window.__rspCoverage = cov;
+      renderCoverageList(cov);
+    }
+
+    function renderCoverageList(cov){
+      const el = document.getElementById('coverage-list');
+      if(!el) return;
+      if(!cov || cov.total === 0){ el.innerHTML = ''; return; }
+      const rows = cov.items.map(it => {
+        const name = it.kind === 'Box' ? 'Box ' + it.idx : 'Column ' + it.idx;
+        const margin = Number.isFinite(it.margin) ? Math.abs(it.margin).toFixed(2) + ' m' : '\u2014';
+        const cls = it.ok ? 'ok' : 'bad';
+        const icon = it.ok ? '\u2713' : '\u2717';
+        const word = it.ok ? 'protected' : 'NOT protected';
+        return '<div class="cov-row"><span class="cov-dot ' + cls + '"></span><span class="cov-name">' + name + '</span><span class="cov-status ' + cls + '">' + icon + ' ' + word + '</span><span class="cov-margin ' + cls + '">' + (it.ok ? '+' : '\u2212') + margin + '</span></div>';
+      }).join('');
+      el.innerHTML = '<div class="cov-title">Structure check \u2014 ' + cov.protected + '/' + cov.total + ' protected</div>' + rows;
     }
 
     /* ---------- 3D scene polish ---------- */
